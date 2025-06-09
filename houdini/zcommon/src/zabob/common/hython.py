@@ -116,13 +116,13 @@ def run_houdini_script(script_path: Path|str|None=None,
     version_path = ZABOB_HOUDINI_DIR / f"h{major_minor}" / "src"
     if version_path.exists():
         paths.append(version_path)
-    
+
     # Add hython world virtual environment site-packages for FastMCP access
     # Both h20.5 and zcommon venvs contain packages needed for the hython MCP server
     h20_5_venv_site_packages = ZABOB_HOUDINI_DIR / f"h{major_minor}" / ".venv" / "lib" / "python3.11" / "site-packages"
     if h20_5_venv_site_packages.exists():
         paths.append(h20_5_venv_site_packages)
-    
+
     zcommon_venv_site_packages = ZABOB_ZCOMMON_DIR / ".venv" / "lib" / "python3.11" / "site-packages"
     if zcommon_venv_site_packages.exists():
         paths.append(zcommon_venv_site_packages)

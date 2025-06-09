@@ -256,7 +256,7 @@ class HoudiniDatabase:
         search_modules = [module_name]
         if not module_name.startswith('_'):
             search_modules.append(f'_{module_name}')
-        
+
         placeholders = ','.join(['?'] * len(search_modules))
         query = f"""
         SELECT name, parent_name, parent_type, datatype, docstring
