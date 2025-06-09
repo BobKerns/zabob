@@ -254,7 +254,7 @@ async def fetch_webpage(urls: list[str], query: str) -> str:
 
 @mcp.tool("get_functions_returning_nodes")
 async def get_functions_returning_nodes():
-    """Find functions that return Houdini node objects."""
+    """Find functions that return Houdini node objects. Searches the houdini_module_data table for functions with Node-related return types."""
     try:
         with db:
             functions = db.get_functions_returning_nodes()
@@ -275,7 +275,7 @@ async def get_functions_returning_nodes():
 
 @mcp.tool("search_functions")
 async def search_functions(keyword: str, limit: int = 20):
-    """Search for functions by keyword in name or docstring."""
+    """Search for functions by keyword in name or docstring. Searches across all Houdini modules in the database."""
     if not keyword:
         return {"error": "No keyword provided."}
 
@@ -298,9 +298,36 @@ async def search_functions(keyword: str, limit: int = 20):
     except Exception as e:
         return {"error": f"Database query failed: {str(e)}"}
 
+@mcp.tool("search_functions_by_module")
+async def search_functions_by_module(module_name: str, limit: int = 50):
+    """Search for functions within a specific module (e.g., 'hou', 'toolutils'). Handles module aliasing automatically."""
+    if not module_name:
+        return {"error": "No module name provided."}
+
+    try:
+        with db:
+            functions = db.search_functions_by_module(module_name, limit)
+            return {
+                "module": module_name,
+                "functions": [
+                    {
+                        "name": f.name,
+                        "module": f.module,
+                        "original_module": f.parent_name,
+                        "datatype": f.datatype,
+                        "docstring": f.docstring[:200] + "..." if f.docstring and len(f.docstring) > 200 else f.docstring
+                    }
+                    for f in functions
+                ],
+                "count": len(functions),
+                "note": "Module aliasing applied (e.g., _hou functions shown as hou)"
+            }
+    except Exception as e:
+        return {"error": f"Database query failed: {str(e)}"}
+
 @mcp.tool("get_primitive_functions")
 async def get_primitive_functions():
-    """Find functions related to primitive operations (selection, manipulation, etc.)."""
+    """Find functions related to primitive operations (selection, manipulation, etc.). Searches the houdini_module_data table."""
     try:
         with db:
             functions = db.get_primitive_related_functions()
@@ -321,7 +348,7 @@ async def get_primitive_functions():
 
 @mcp.tool("get_modules_summary")
 async def get_modules_summary():
-    """Get a summary of all Houdini modules with function counts."""
+    """Get a summary of all Houdini modules with function counts. Uses houdini_modules and houdini_module_data tables."""
     try:
         with db:
             modules = db.get_modules_summary()
@@ -437,7 +464,7 @@ async def enhanced_search_node_types(keyword: str, include_docs: bool = True, li
 
 @mcp.tool("enhanced_search_functions")
 async def enhanced_search_functions(keyword: str, include_examples: bool = True, limit: int = 5):
-    """Search functions with optional code examples and documentation."""
+    """Search functions with optional code examples and documentation. Searches houdini_module_data table and enhances with web search."""
     try:
         with db:
             # Get static database results
@@ -756,7 +783,8 @@ def main(help_tools: bool = False):
         echo("🔧 Zabob MCP Server - Available Tools:\n")
         tools = [
             ("get_functions_returning_nodes", "Find functions that return Houdini node objects"),
-            ("search_functions", "Search functions by keyword (requires: keyword, optional: limit)"),
+            ("search_functions", "Search functions by keyword in name/docstring (requires: keyword, optional: limit)"),
+            ("search_functions_by_module", "Search functions within a specific module (requires: module_name, optional: limit)"),
             ("enhanced_search_functions", "Search functions with code examples and docs (requires: keyword, optional: include_examples, limit)"),
             ("get_primitive_functions", "Find functions related to primitive operations"),
             ("get_modules_summary", "Get summary of all Houdini modules with function counts"),
