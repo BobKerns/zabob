@@ -105,15 +105,15 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[None]:
         # This awaits the listing of responses, but not their loading.
         # That happens at the point of first use, or on exit.
         await load_responses()
-        
+
         # Start the hython MCP server
         await start_hython_server()
-        
+
         yield
     finally:
         # Stop the hython server first
         await stop_hython_server()
-        
+
         # Cancel any remaining tasks for graceful shutdown
         current_task = asyncio.current_task()
         tasks = [task for task in asyncio.all_tasks() if task != current_task and not task.done()]
@@ -161,28 +161,28 @@ async def load_responses():
 async def start_hython_server():
     """Start the hython MCP server as a subprocess using the hython.py wrapper."""
     global HYTHON_SERVER_PROCESS
-    
+
     if HYTHON_SERVER_PROCESS is not None:
         logging.warning("Hython server already running")
         return
-    
+
     try:
         # Path to the hython MCP server script
         hython_server_path = ROOT / "houdini" / "h20.5" / "src" / "zabob" / "h20_5" / "hython_mcp_server.py"
-        
+
         if not hython_server_path.exists():
             logging.error(f"Hython server script not found: {hython_server_path}")
             return
-        
+
         # Path to the hython.py wrapper script
         hython_wrapper_path = ROOT / "houdini" / "zcommon" / "src" / "zabob" / "common" / "hython.py"
-        
+
         if not hython_wrapper_path.exists():
             logging.error(f"Hython wrapper script not found: {hython_wrapper_path}")
             return
-        
+
         logging.info(f"Starting hython MCP server via module: zabob.h20_5.hython_mcp_server")
-        
+
         # Use Python to run the hython.py wrapper with -m flag for the MCP server module
         # This pattern ensures proper hython environment setup:
         # python hython.py -m zabob.h20_5.hython_mcp_server
@@ -195,10 +195,10 @@ async def start_hython_server():
             bufsize=0,  # Unbuffered for real-time communication
             cwd=str(ROOT)  # Set working directory to project root
         )
-        
+
         # Give the process a moment to start
         await asyncio.sleep(2)
-        
+
         if HYTHON_SERVER_PROCESS.returncode is not None:
             logging.error(f"Hython server failed to start with return code: {HYTHON_SERVER_PROCESS.returncode}")
             if HYTHON_SERVER_PROCESS.stderr:
@@ -207,7 +207,7 @@ async def start_hython_server():
             HYTHON_SERVER_PROCESS = None
         else:
             logging.info(f"Hython server started successfully with PID: {HYTHON_SERVER_PROCESS.pid}")
-            
+
     except Exception as e:
         logging.error(f"Failed to start hython server: {e}")
         HYTHON_SERVER_PROCESS = None
@@ -216,16 +216,16 @@ async def start_hython_server():
 async def stop_hython_server():
     """Stop the hython MCP server subprocess."""
     global HYTHON_SERVER_PROCESS
-    
+
     if HYTHON_SERVER_PROCESS is None:
         return
-    
+
     try:
         logging.info(f"Stopping hython server with PID: {HYTHON_SERVER_PROCESS.pid}")
-        
+
         # Try graceful termination first
         HYTHON_SERVER_PROCESS.terminate()
-        
+
         # Wait up to 5 seconds for graceful shutdown
         try:
             await asyncio.wait_for(
@@ -237,9 +237,9 @@ async def stop_hython_server():
             logging.warning("Hython server didn't terminate gracefully, forcing kill")
             HYTHON_SERVER_PROCESS.kill()
             await asyncio.create_task(asyncio.to_thread(HYTHON_SERVER_PROCESS.wait))
-        
+
         logging.info("Hython server stopped successfully")
-        
+
     except Exception as e:
         logging.error(f"Error stopping hython server: {e}")
     finally:
@@ -254,13 +254,13 @@ async def call_hython_tool(tool_name: str, arguments: dict[str, Any]) -> dict[st
             "success": False,
             "error": "Hython server is not running"
         }
-    
+
     if not HYTHON_SERVER_PROCESS.stdin or not HYTHON_SERVER_PROCESS.stdout:
         return {
             "success": False,
             "error": "Hython server pipes not available"
         }
-    
+
     try:
         # Create a request message for the hython server
         request = {
@@ -272,12 +272,12 @@ async def call_hython_tool(tool_name: str, arguments: dict[str, Any]) -> dict[st
                 "arguments": arguments
             }
         }
-        
+
         # Send request to hython process stdin
         request_json = json.dumps(request) + "\n"
         HYTHON_SERVER_PROCESS.stdin.write(request_json)
         await asyncio.create_task(asyncio.to_thread(HYTHON_SERVER_PROCESS.stdin.flush))
-        
+
         # Read response from stdout with timeout
         try:
             response_line = await asyncio.wait_for(
@@ -287,7 +287,7 @@ async def call_hython_tool(tool_name: str, arguments: dict[str, Any]) -> dict[st
             if response_line:
                 response_json = response_line.strip()
                 response_data = json.loads(response_json)
-                
+
                 if "result" in response_data:
                     return response_data["result"]
                 elif "error" in response_data:
@@ -310,7 +310,7 @@ async def call_hython_tool(tool_name: str, arguments: dict[str, Any]) -> dict[st
                 "success": False,
                 "error": f"Timeout calling hython tool '{tool_name}'"
             }
-            
+
     except Exception as e:
         return {
             "success": False,
@@ -324,13 +324,13 @@ async def get_hython_resource(uri: str) -> dict[str, Any]:
             "success": False,
             "error": "Hython server is not running"
         }
-    
+
     if not HYTHON_SERVER_PROCESS.stdin or not HYTHON_SERVER_PROCESS.stdout:
         return {
             "success": False,
             "error": "Hython server pipes not available"
         }
-    
+
     try:
         # Create a request message for the hython server
         request = {
@@ -341,12 +341,12 @@ async def get_hython_resource(uri: str) -> dict[str, Any]:
                 "uri": uri
             }
         }
-        
+
         # Send request to hython process stdin
         request_json = json.dumps(request) + "\n"
         HYTHON_SERVER_PROCESS.stdin.write(request_json)
         await asyncio.create_task(asyncio.to_thread(HYTHON_SERVER_PROCESS.stdin.flush))
-        
+
         # Read response from stdout with timeout
         try:
             response_line = await asyncio.wait_for(
@@ -356,7 +356,7 @@ async def get_hython_resource(uri: str) -> dict[str, Any]:
             if response_line:
                 response_json = response_line.strip()
                 response_data = json.loads(response_json)
-                
+
                 if "result" in response_data:
                     return response_data["result"]
                 elif "error" in response_data:
@@ -379,7 +379,7 @@ async def get_hython_resource(uri: str) -> dict[str, Any]:
                 "success": False,
                 "error": f"Timeout getting hython resource '{uri}'"
             }
-            
+
     except Exception as e:
         return {
             "success": False,
