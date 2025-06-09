@@ -101,7 +101,7 @@ def run_houdini_script(script_path: Path|str|None=None,
         case _, None:
             script = (script_path, )
         case _, _:
-            script = ('-m', module, '--', script_path)
+            script = ('-m', module, script_path)
 
     match capture_output, exec:
         case True, True:
@@ -111,7 +111,7 @@ def run_houdini_script(script_path: Path|str|None=None,
     houdini = get_houdini(version)
 
     # Build paths for the environment
-    major_minor = f"{houdini.houdini_version.major}_{houdini.houdini_version.minor}"
+    major_minor = f"{houdini.houdini_version.major}.{houdini.houdini_version.minor}"
     paths = [ZABOB_ZCOMMON_DIR / "src", ZABOB_ROOT / "zabob-modules" / "src"]
     version_path = ZABOB_HOUDINI_DIR / f"h{major_minor}" / "src"
     if version_path.exists():
@@ -125,17 +125,23 @@ def run_houdini_script(script_path: Path|str|None=None,
     with environment(PYTHONPATH=os.pathsep.join(str(p) for p in paths),
                     PYTHONPYCACHEPREFIX=str(pycache_dir),
                     **(env_vars or {})):
-        if exec:
-            return exec_cmd(houdini.hython, *script, *args,
-                            **kwargs)
-        if capture_output:
-            return capture(houdini.hython, *script, *args,
+        try:
+            if exec:
+                return exec_cmd(houdini.hython, *script, *args,
+                                env=os.environ,
+                                **kwargs)
+            if capture_output:
+                return capture(houdini.hython, *script, *args,
+                                env=os.environ,
+                               **kwargs)
+            else:
+                return run(houdini.hython, *script, *args,
+                           env=os.environ,
                            **kwargs)
-        else:
-            return run(houdini.hython, *script, *args,
-                       **kwargs)
+        except RuntimeError as ex:
+            print(ex, file=sys.stderr)
 
-@ click.command(
+@click.command(
     name='hython',
     help='Run hython with the given arguments.',
     context_settings=dict(
