@@ -4,11 +4,8 @@ Hython MCP Server - Runs within hython environment with direct hou access.
 This server provides sophisticated Houdini scene analysis and code generation.
 """
 
-import asyncio
 import json
-import sys
-from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import hou
 from fastmcp import FastMCP
@@ -19,7 +16,7 @@ from zabob.h20_5.node_loader import analyze_houdini_scene, extract_non_default_p
 mcp = FastMCP("Houdini Scene Analysis Server")
 
 @mcp.tool("analyze_scene")
-async def analyze_scene(file_path: str) -> Dict[str, Any]:
+async def analyze_scene(file_path: str) -> dict[str, Any]:
     """
     Analyze a Houdini scene file and return structured data with generated Python code.
 
@@ -40,7 +37,7 @@ async def analyze_scene(file_path: str) -> Dict[str, Any]:
         }
 
 @mcp.tool("get_scene_info")
-async def get_scene_info() -> Dict[str, Any]:
+async def get_scene_info() -> dict[str, Any]:
     """
     Get information about the current Houdini scene.
 
@@ -73,7 +70,7 @@ async def get_scene_info() -> Dict[str, Any]:
         }
 
 @mcp.tool("get_node_info")
-async def get_node_info(node_path: str) -> Dict[str, Any]:
+async def get_node_info(node_path: str) -> dict[str, Any]:
     """
     Get detailed information about a specific node.
 
@@ -128,7 +125,7 @@ async def get_node_info(node_path: str) -> Dict[str, Any]:
         }
 
 @mcp.tool("list_nodes")
-async def list_nodes(parent_path: str = "/") -> Dict[str, Any]:
+async def list_nodes(parent_path: str = "/") -> dict[str, Any]:
     """
     List all nodes under a given parent path.
 
@@ -172,7 +169,7 @@ async def list_nodes(parent_path: str = "/") -> Dict[str, Any]:
         }
 
 @mcp.tool("create_node")
-async def create_node(parent_path: str, node_type: str, name: str = "", **kwargs) -> Dict[str, Any]:
+async def create_node(parent_path: str, node_type: str, name: str = "", **kwargs) -> dict[str, Any]:
     """
     Create a new node in the scene.
 
