@@ -29,6 +29,7 @@ import sys
 import click
 import httpx
 import logging
+import subprocess
 from contextlib import asynccontextmanager
 
 from aiopath.path import AsyncPath as Path
@@ -52,6 +53,8 @@ for p in (MCP_SRC, CORE_SRC, COMMON_SRC):
 
 from zabob.core import JsonData
 from zabob.mcp.database import HoudiniDatabase
+from zabob.common.hython import run_houdini_script
+from zabob.common.subproc import spawn, check_pid
 
 # TypedDict definitions for better type safety
 class SearchResult(TypedDict):
@@ -96,14 +99,21 @@ with open(INSTRUCTIONS_PATH, "r", encoding="utf-8") as f:
 
 @asynccontextmanager
 async def app_lifespan(server: FastMCP) -> AsyncIterator[None]:
-    """Manage application lifecycle - initialize responses on startup."""
+    """Manage application lifecycle - initialize responses and start hython server on startup."""
     try:
         # Initialize responses and prompts during startup
         # This awaits the listing of responses, but not their loading.
         # That happens at the point of first use, or on exit.
         await load_responses()
+        
+        # Start the hython MCP server
+        await start_hython_server()
+        
         yield
     finally:
+        # Stop the hython server first
+        await stop_hython_server()
+        
         # Cancel any remaining tasks for graceful shutdown
         current_task = asyncio.current_task()
         tasks = [task for task in asyncio.all_tasks() if task != current_task and not task.done()]
@@ -125,6 +135,9 @@ mcp = FastMCP("zabob", instructions=INSTRUCTIONS, lifespan=app_lifespan)
 RESPONSES: dict[str, Awaitable[JsonData|str]] =  {}
 PROMPTS: dict[str, Awaitable[JsonData|str]] =  {}
 
+# Global variable to store the hython MCP server process
+HYTHON_SERVER_PROCESS: subprocess.Popen | None = None
+
 
 
 async def load_responses():
@@ -143,6 +156,235 @@ async def load_responses():
         RESPONSES[f.stem] = load_text(f)
     async for f in cast(AsyncIterable[Path], PROMPTS_DIR.glob("*.md")):
         PROMPTS[f.stem] = load_text(f)
+
+
+async def start_hython_server():
+    """Start the hython MCP server as a subprocess using the hython.py wrapper."""
+    global HYTHON_SERVER_PROCESS
+    
+    if HYTHON_SERVER_PROCESS is not None:
+        logging.warning("Hython server already running")
+        return
+    
+    try:
+        # Path to the hython MCP server script
+        hython_server_path = ROOT / "houdini" / "h20.5" / "src" / "zabob" / "h20_5" / "hython_mcp_server.py"
+        
+        if not hython_server_path.exists():
+            logging.error(f"Hython server script not found: {hython_server_path}")
+            return
+        
+        # Path to the hython.py wrapper script
+        hython_wrapper_path = ROOT / "houdini" / "zcommon" / "src" / "zabob" / "common" / "hython.py"
+        
+        if not hython_wrapper_path.exists():
+            logging.error(f"Hython wrapper script not found: {hython_wrapper_path}")
+            return
+        
+        logging.info(f"Starting hython MCP server via module: zabob.h20_5.hython_mcp_server")
+        
+        # Use Python to run the hython.py wrapper with -m flag for the MCP server module
+        # This pattern ensures proper hython environment setup:
+        # python hython.py -m zabob.h20_5.hython_mcp_server
+        HYTHON_SERVER_PROCESS = subprocess.Popen(
+            ["python", str(hython_wrapper_path), "-m", "zabob.h20_5.hython_mcp_server"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=0,  # Unbuffered for real-time communication
+            cwd=str(ROOT)  # Set working directory to project root
+        )
+        
+        # Give the process a moment to start
+        await asyncio.sleep(2)
+        
+        if HYTHON_SERVER_PROCESS.returncode is not None:
+            logging.error(f"Hython server failed to start with return code: {HYTHON_SERVER_PROCESS.returncode}")
+            if HYTHON_SERVER_PROCESS.stderr:
+                stderr_output = HYTHON_SERVER_PROCESS.stderr.read()
+                logging.error(f"Hython server stderr: {stderr_output}")
+            HYTHON_SERVER_PROCESS = None
+        else:
+            logging.info(f"Hython server started successfully with PID: {HYTHON_SERVER_PROCESS.pid}")
+            
+    except Exception as e:
+        logging.error(f"Failed to start hython server: {e}")
+        HYTHON_SERVER_PROCESS = None
+
+
+async def stop_hython_server():
+    """Stop the hython MCP server subprocess."""
+    global HYTHON_SERVER_PROCESS
+    
+    if HYTHON_SERVER_PROCESS is None:
+        return
+    
+    try:
+        logging.info(f"Stopping hython server with PID: {HYTHON_SERVER_PROCESS.pid}")
+        
+        # Try graceful termination first
+        HYTHON_SERVER_PROCESS.terminate()
+        
+        # Wait up to 5 seconds for graceful shutdown
+        try:
+            await asyncio.wait_for(
+                asyncio.create_task(asyncio.to_thread(HYTHON_SERVER_PROCESS.wait)),
+                timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            # Force kill if graceful termination didn't work
+            logging.warning("Hython server didn't terminate gracefully, forcing kill")
+            HYTHON_SERVER_PROCESS.kill()
+            await asyncio.create_task(asyncio.to_thread(HYTHON_SERVER_PROCESS.wait))
+        
+        logging.info("Hython server stopped successfully")
+        
+    except Exception as e:
+        logging.error(f"Error stopping hython server: {e}")
+    finally:
+        HYTHON_SERVER_PROCESS = None
+
+
+# Hython server communication
+async def call_hython_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Call a tool on the hython MCP server via subprocess communication."""
+    if HYTHON_SERVER_PROCESS is None or HYTHON_SERVER_PROCESS.returncode is not None:
+        return {
+            "success": False,
+            "error": "Hython server is not running"
+        }
+    
+    if not HYTHON_SERVER_PROCESS.stdin or not HYTHON_SERVER_PROCESS.stdout:
+        return {
+            "success": False,
+            "error": "Hython server pipes not available"
+        }
+    
+    try:
+        # Create a request message for the hython server
+        request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments
+            }
+        }
+        
+        # Send request to hython process stdin
+        request_json = json.dumps(request) + "\n"
+        HYTHON_SERVER_PROCESS.stdin.write(request_json)
+        await asyncio.create_task(asyncio.to_thread(HYTHON_SERVER_PROCESS.stdin.flush))
+        
+        # Read response from stdout with timeout
+        try:
+            response_line = await asyncio.wait_for(
+                asyncio.create_task(asyncio.to_thread(HYTHON_SERVER_PROCESS.stdout.readline)),
+                timeout=30.0
+            )
+            if response_line:
+                response_json = response_line.strip()
+                response_data = json.loads(response_json)
+                
+                if "result" in response_data:
+                    return response_data["result"]
+                elif "error" in response_data:
+                    return {
+                        "success": False,
+                        "error": f"Hython server error: {response_data['error']}"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": "Invalid response from hython server"
+                    }
+            else:
+                return {
+                    "success": False,
+                    "error": "No response from hython server"
+                }
+        except asyncio.TimeoutError:
+            return {
+                "success": False,
+                "error": f"Timeout calling hython tool '{tool_name}'"
+            }
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error calling hython tool '{tool_name}': {str(e)}"
+        }
+
+async def get_hython_resource(uri: str) -> dict[str, Any]:
+    """Get a resource from the hython MCP server via subprocess communication."""
+    if HYTHON_SERVER_PROCESS is None or HYTHON_SERVER_PROCESS.returncode is not None:
+        return {
+            "success": False,
+            "error": "Hython server is not running"
+        }
+    
+    if not HYTHON_SERVER_PROCESS.stdin or not HYTHON_SERVER_PROCESS.stdout:
+        return {
+            "success": False,
+            "error": "Hython server pipes not available"
+        }
+    
+    try:
+        # Create a request message for the hython server
+        request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "resources/read",
+            "params": {
+                "uri": uri
+            }
+        }
+        
+        # Send request to hython process stdin
+        request_json = json.dumps(request) + "\n"
+        HYTHON_SERVER_PROCESS.stdin.write(request_json)
+        await asyncio.create_task(asyncio.to_thread(HYTHON_SERVER_PROCESS.stdin.flush))
+        
+        # Read response from stdout with timeout
+        try:
+            response_line = await asyncio.wait_for(
+                asyncio.create_task(asyncio.to_thread(HYTHON_SERVER_PROCESS.stdout.readline)),
+                timeout=30.0
+            )
+            if response_line:
+                response_json = response_line.strip()
+                response_data = json.loads(response_json)
+                
+                if "result" in response_data:
+                    return response_data["result"]
+                elif "error" in response_data:
+                    return {
+                        "success": False,
+                        "error": f"Hython server error: {response_data['error']}"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": "Invalid response from hython server"
+                    }
+            else:
+                return {
+                    "success": False,
+                    "error": "No response from hython server"
+                }
+        except asyncio.TimeoutError:
+            return {
+                "success": False,
+                "error": f"Timeout getting hython resource '{uri}'"
+            }
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error getting hython resource '{uri}': {str(e)}"
+        }
 
 
 T = TypeVar("T")
@@ -720,6 +962,93 @@ async def query_response(query: str):
         return {"error": "No query provided."}
     return {"response": await RESPONSES.get(query, awaitable_value("No response found."))}
 
+
+# Hython MCP Server Proxy Tools
+@mcp.tool("houdini_analyze_scene")
+async def houdini_analyze_scene(file_path: str):
+    """
+    Analyze a Houdini scene file and return structured data with generated Python code.
+    This tool proxies requests to the hython-based MCP server for analysis.
+
+    Args:
+        file_path: Path to the Houdini scene file (.hip, .hipnc, .hda)
+
+    Returns:
+        Dictionary containing analysis results, statistics, and generated Python code
+    """
+    return await call_hython_tool("analyze_scene", {"file_path": file_path})
+
+@mcp.tool("houdini_get_scene_info")
+async def houdini_get_scene_info():
+    """
+    Get information about the current Houdini scene.
+    This tool proxies requests to the hython-based MCP server.
+
+    Returns:
+        Dictionary containing current scene information including node counts and categories
+    """
+    return await call_hython_tool("get_scene_info", {})
+
+@mcp.tool("houdini_get_node_info")
+async def houdini_get_node_info(node_path: str):
+    """
+    Get detailed information about a specific Houdini node.
+    This tool proxies requests to the hython-based MCP server.
+
+    Args:
+        node_path: Path to the Houdini node (e.g., "/obj/geo1")
+
+    Returns:
+        Dictionary containing node information including parameters, inputs, outputs
+    """
+    return await call_hython_tool("get_node_info", {"node_path": node_path})
+
+@mcp.tool("houdini_list_nodes")
+async def houdini_list_nodes(path: str = "/", node_type: str = "", recursive: bool = True):
+    """
+    List nodes in the current Houdini scene with optional filtering.
+    This tool proxies requests to the hython-based MCP server.
+
+    Args:
+        path: Starting path for node search (default: "/")
+        node_type: Filter by node type (optional)
+        recursive: Whether to search recursively (default: True)
+
+    Returns:
+        Dictionary containing list of nodes with their paths and types
+    """
+    return await call_hython_tool("list_nodes", {
+        "path": path,
+        "node_type": node_type,
+        "recursive": recursive
+    })
+
+@mcp.tool("houdini_create_node")
+async def houdini_create_node(parent_path: str, node_type: str, name: str = ""):
+    """
+    Create a new node in the current Houdini scene.
+    This tool proxies requests to the hython-based MCP server.
+
+    Args:
+        parent_path: Path to the parent node where the new node will be created
+        node_type: Type of node to create (e.g., "geo", "merge", "transform")
+        name: Optional name for the new node
+
+    Returns:
+        Dictionary containing information about the created node
+    """
+    return await call_hython_tool("create_node", {
+        "parent_path": parent_path,
+        "node_type": node_type,
+        "name": name
+    })
+
+@mcp.resource("houdini://current_scene")
+async def houdini_current_scene():
+    """Get information about the current Houdini scene as a resource."""
+    return await get_hython_resource("scene://current")
+
+
 @mcp.resource("status://status")
 async def status() -> dict[str, Any]:
     """Return server status."""
@@ -763,6 +1092,13 @@ def main(help_tools: bool = False):
     • fetch_houdini_docs              - Fetch official Houdini documentation for nodes or functions
     • query_response                  - Handle general queries (legacy tool)
 
+    Hython Scene Analysis Tools (via subprocess):
+    • houdini_analyze_scene           - Analyze a Houdini scene file and generate Python code
+    • houdini_get_scene_info          - Get information about the current Houdini scene
+    • houdini_get_node_info           - Get detailed information about a specific node
+    • houdini_list_nodes              - List nodes in the scene with optional filtering
+    • houdini_create_node             - Create a new node in the scene
+
     Database: {db.db_path if hasattr(db, 'db_path') else 'Not initialized'}
 
     Usage:
@@ -772,6 +1108,9 @@ def main(help_tools: bool = False):
     The server waits for MCP client connections and responds to tool requests
     with data from the Houdini modules database, enhanced with live web search
     and documentation fetching capabilities.
+
+    Additionally, the server automatically manages a hython-based subprocess
+    for direct Houdini scene analysis and manipulation within the hython environment.
     """
 
     def echo(*args, err: bool=True, **kwargs):
@@ -797,14 +1136,24 @@ def main(help_tools: bool = False):
             ("pdg_workflow_assistant", "Get PDG components and workflow guidance (requires: workflow_description)"),
             ("web_search_houdini", "Perform web search for Houdini content (requires: query, optional: num_results)"),
             ("fetch_houdini_docs", "Fetch official Houdini documentation (requires: doc_type, optional: node_name, function_name)"),
-            ("query_response", "Handle general queries (requires: query)")
+            ("query_response", "Handle general queries (requires: query)"),
+            ("", "--- Hython Scene Analysis Tools (via subprocess) ---"),
+            ("houdini_analyze_scene", "Analyze a Houdini scene file and generate Python code (requires: file_path)"),
+            ("houdini_get_scene_info", "Get information about the current Houdini scene"),
+            ("houdini_get_node_info", "Get detailed information about a specific node (requires: node_path)"),
+            ("houdini_list_nodes", "List nodes in the scene with filtering (optional: path, node_type, recursive)"),
+            ("houdini_create_node", "Create a new node in the scene (requires: parent_path, node_type, optional: name)")
         ]
 
         for tool_name, description in tools:
-            echo(f"  {tool_name:30} - {description}")
+            if tool_name:  # Skip separator lines
+                echo(f"  {tool_name:30} - {description}")
+            else:
+                echo(f"\n{description}")
 
         echo(f"\n📊 Database: {db.db_path if hasattr(db, 'db_path') else 'Not initialized'}")
         echo("\n🚀 To start the MCP server, run without arguments.")
+        echo("🔧 Hython subprocess will be automatically managed for scene analysis tools.")
         return
 
     echo("🚀 Starting Zabob MCP Server...")
