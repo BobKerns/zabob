@@ -4,7 +4,7 @@ Generates Python code to recreate Houdini scenes from analyzed node data.
 """
 
 import hou
-from .parameter_extraction import format_parm_value
+from zabob.h20_5.parameter_extraction import format_parm_value
 
 
 def generate_chain_code(chain, chain_info, non_default_parms=None):

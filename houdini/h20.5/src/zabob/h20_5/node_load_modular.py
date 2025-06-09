@@ -12,11 +12,11 @@ import os
 import hou
 
 # Import our specialized modules
-from .parameter_extraction import extract_non_default_parms
-from .node_references import find_node_references_in_parms, resolve_node_references
-from .chain_detection import detect_linear_chains, find_chain_connections, get_chain_info
-from .topological_sort import topological_sort_with_chains, analyze_dependencies, get_creation_order
-from .code_generation import generate_network_code, generate_summary_comment, format_code_with_style
+from zabob.h20_5.parameter_extraction import extract_non_default_parms
+from zabob.h20_5.node_references import find_node_references_in_parms, resolve_node_references
+from zabob.h20_5.chain_detection import detect_linear_chains, find_chain_connections, get_chain_info
+from zabob.h20_5.topological_sort import topological_sort_with_chains, analyze_dependencies, get_creation_order
+from zabob.h20_5.code_generation import generate_network_code, generate_summary_comment, format_code_with_style
 
 
 def load_houdini_file(file_path, output_file=None):
