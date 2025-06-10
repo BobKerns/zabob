@@ -28,13 +28,13 @@ def detect_linear_chains(nodes):
 
         # Get input connections
         if hasattr(node, 'inputs') and callable(node.inputs):
-            for input_node in node.inputs():
+            for input_node in node.inputs(): # type: ignore
                 if input_node and input_node in nodes:
                     node_inputs[node].append(input_node)
 
         # Get output connections
         if hasattr(node, 'outputs') and callable(node.outputs):
-            for output_node in node.outputs():
+            for output_node in node.outputs(): # type: ignore
                 if output_node and output_node in nodes:
                     node_outputs[node].append(output_node)
 
@@ -132,7 +132,7 @@ def find_chain_connections(chains, all_nodes):
         last_node = chain[-1]
 
         if hasattr(last_node, 'outputs') and callable(last_node.outputs):
-            for output_node in last_node.outputs():
+            for output_node in last_node.outputs(): #type: ignore
                 if output_node in node_to_chain:
                     target_chain_idx = node_to_chain[output_node]
                     if target_chain_idx != chain_idx:
@@ -193,7 +193,9 @@ def is_simple_chain(chain):
         # Check inputs (except for first node)
         if i > 0:
             if hasattr(node, 'inputs') and callable(node.inputs):
-                inputs = [inp for inp in node.inputs() if inp is not None]
+                inputs = [inp
+                          for inp in node.inputs() # type: ignore
+                          if inp is not None]
                 if len(inputs) != 1 or inputs[0] != chain[i-1]:
                     return False
 
@@ -202,7 +204,9 @@ def is_simple_chain(chain):
             if hasattr(node, 'outputs') and callable(node.outputs):
                 # For internal chain nodes, outputs should only go to next in chain
                 # But we allow additional outputs to nodes outside the chain
-                outputs = [out for out in node.outputs() if out is not None]
+                outputs = [out
+                           for out in node.outputs() # type: ignore
+                           if out is not None]
                 if chain[i+1] not in outputs:
                     return False
 
