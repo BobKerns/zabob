@@ -1,4 +1,5 @@
 # Custom Dictionary Words
+agens
 aibridge
 aiofile
 aiofiles
@@ -8,6 +9,8 @@ amodio
 anyio
 assetgallery
 assettools
+asyncgen
+asyncgens
 attribwrangle
 autorig
 backgroundrenderer

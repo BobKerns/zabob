@@ -22,6 +22,7 @@ An MCP server for the Zabob project.
 '''
 
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, AsyncIterator
+from doctest import debug
 import json
 from typing import Any, TypeVar, cast, TypedDict
 import asyncio
@@ -43,6 +44,7 @@ MCP_SRC = ROOT/ 'mcp-server/src'
 CORE_SRC = ROOT / 'zabob-modules/src'
 COMMON_SRC = ROOT / 'houdini/zcommon/src'
 
+
 # Check for source directories (but not .venv in Docker)
 for p in (MCP_SRC, CORE_SRC, COMMON_SRC):
     if not p.exists():
@@ -51,10 +53,14 @@ for p in (MCP_SRC, CORE_SRC, COMMON_SRC):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))  # type: ignore[no-redef]
 
+from zabob.common import DEBUG, INFO, ZABOB_OUT_DIR, Level, get_houdini, spawn, config_logging
 from zabob.core import JsonData
 from zabob.mcp.database import HoudiniDatabase
 from zabob.common.hython import run_houdini_script
 from zabob.common.subproc import spawn, check_pid
+
+DEFAULT_LOG = ZABOB_OUT_DIR / 'logs/mcp_server.log'
+HYTHON_LOG = DEFAULT_LOG.with_stem('hython_mcp_server')
 
 # TypedDict definitions for better type safety
 class SearchResult(TypedDict):
@@ -167,6 +173,7 @@ async def start_hython_server():
         return
 
     try:
+        houdini = get_houdini()
         # Path to the hython MCP server script
         hython_server_path = ROOT / "houdini" / "h20.5" / "src" / "zabob" / "h20_5" / "hython_mcp_server.py"
 
@@ -183,11 +190,16 @@ async def start_hython_server():
 
         logging.info(f"Starting hython MCP server via module: zabob.h20_5.hython_mcp_server")
 
+        if DEBUG:
+            debug_flag = ("--debug",)
+        else:
+            debug_flag = ()
         # Use Python to run the hython.py wrapper with -m flag for the MCP server module
         # This pattern ensures proper hython environment setup:
         # python hython.py -m zabob.h20_5.hython_mcp_server
-        HYTHON_SERVER_PROCESS = subprocess.Popen(
-            ["python", str(hython_wrapper_path), "-m", "zabob.h20_5.hython_mcp_server"],
+        HYTHON_SERVER_PROCESS = spawn(
+            houdini.hython, hython_wrapper_path, "--module", "zabob.h20_5.hython_mcp_server",
+            "--log-file", HYTHON_LOG, *debug_flag,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -207,6 +219,25 @@ async def start_hython_server():
             HYTHON_SERVER_PROCESS = None
         else:
             logging.info(f"Hython server started successfully with PID: {HYTHON_SERVER_PROCESS.pid}")
+        if HYTHON_SERVER_PROCESS is not None:
+            proc = HYTHON_SERVER_PROCESS
+            async def monitor():
+                global HYTHON_SERVER_PROCESS
+                proc.wait()
+                if proc.returncode is not None:
+                    logging.error(f"MONITOR: Hython server process exited with return code: {proc.returncode}")
+                    if proc.stderr:
+                        stderr_output = proc.stderr.read()
+                        if stderr_output:
+                            # Log stderr output if available
+                            logging.error(f"MONITOR: Hython server stderr: {stderr_output}")
+                    if proc.stdout:
+                        stdout_output = proc.stdout.read()
+                        if stdout_output:
+                            # Log stderr output if available
+                            logging.error(f"MONITOR: Hython server stdout: {stdout_output}")
+                    HYTHON_SERVER_PROCESS = None
+            asyncio.create_task(monitor())
 
     except Exception as e:
         logging.error(f"Failed to start hython server: {e}")
@@ -314,7 +345,7 @@ async def call_hython_tool(tool_name: str, arguments: dict[str, Any]) -> dict[st
     except Exception as e:
         return {
             "success": False,
-            "error": f"Unexpected error calling hython tool '{tool_name}': {str(e)}"
+            "error": f"Unexpected error calling hython tool '{tool_name}': {str(e)}: {HYTHON_SERVER_PROCESS.stderr.read() if HYTHON_SERVER_PROCESS.stderr else 'No stderr available'}"
         }
 
 async def get_hython_resource(uri: str) -> dict[str, Any]:
@@ -351,7 +382,7 @@ async def get_hython_resource(uri: str) -> dict[str, Any]:
         try:
             response_line = await asyncio.wait_for(
                 asyncio.create_task(asyncio.to_thread(HYTHON_SERVER_PROCESS.stdout.readline)),
-                timeout=30.0
+                None, #timeout=30.0
             )
             if response_line:
                 response_json = response_line.strip()
@@ -1073,7 +1104,11 @@ async def prompt(prompt: str, data: dict[str, Any]) -> dict[str, Any]:
 
 @click.command()
 @click.option('--help-tools', is_flag=True, help='Show detailed information about available MCP tools and exit')
-def main(help_tools: bool = False):
+@click.option('--debug', is_flag=True, help='Enable debug mode for additional logging')
+@click.option('--log-file', type=click.Path(path_type=SyncPath), default=None, help='Path to log file for debug output')
+def main(help_tools: bool = False,
+         debug: bool = False,
+         log_file: SyncPath|None = None):
     """
     Available MCP Tools:
     • get_functions_returning_nodes    - Find functions that return Houdini node objects
@@ -1155,6 +1190,11 @@ def main(help_tools: bool = False):
         echo("\n🚀 To start the MCP server, run without arguments.")
         echo("🔧 Hython subprocess will be automatically managed for scene analysis tools.")
         return
+
+    config_logging(DEBUG if debug else INFO, log_file)
+    if log_file:
+        global HYTHON_LOG
+        HYTHON_LOG = log_file.with_stem("hython_mcp")
 
     echo("🚀 Starting Zabob MCP Server...")
     echo(f"📊 Database: {db.db_path if hasattr(db, 'db_path') else 'Not initialized'}")
