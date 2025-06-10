@@ -16,6 +16,36 @@ from fastmcp import FastMCP
 from zabob.common import INFO, DEBUG, config_logging, OptionalType
 from zabob.h20_5.node_loader import analyze_houdini_scene, extract_non_default_parms
 
+
+from haio import HoudiniEventLoop
+import asyncio
+
+asyncio.set_event_loop_policy(None)
+# Patch broken method. With the default event loop policy, Houdini's broken
+# event loop shouldn't be called, but we patch it just in case.
+async def shutdown_asyncgens(self):
+    self._asyncgens_shutdown_called = True
+
+    if not len(self._asyncgens):
+        return
+
+    closing_agens = list(self._asyncgens)
+    self._asyncgens.clear()
+
+    results = await asyncio.gather(
+        *[ag.aclose() for ag in closing_agens],
+        return_exceptions=True)
+
+    for result, asyncgen in zip(results, closing_agens):
+        if isinstance(result, Exception):
+            self.call_exception_handler({
+                'message': f'an error occurred during closing of '
+                            f'asynchronous generator {asyncgen!r}',
+                'exception': result,
+                'asyncgen': asyncgen
+            })
+HoudiniEventLoop.shutdown_asyncgens = shutdown_asyncgens
+
 mcp = FastMCP("Houdini Scene Analysis Server")
 
 @mcp.tool("analyze_scene")
