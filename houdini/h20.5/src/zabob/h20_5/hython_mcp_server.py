@@ -5,12 +5,15 @@ This server provides sophisticated Houdini scene analysis and code generation.
 """
 
 import json
+from pathlib import Path
 from typing import Any
 
+import click
 import hou
 from fastmcp import FastMCP
 
 # Import our scene analysis functions
+from zabob.common import INFO, DEBUG, config_logging, OptionalType
 from zabob.h20_5.node_loader import analyze_houdini_scene, extract_non_default_parms
 
 mcp = FastMCP("Houdini Scene Analysis Server")
@@ -241,8 +244,15 @@ async def get_current_scene() -> str:
     except Exception as e:
         return f"Error: {str(e)}"
 
-def main():
+@click.command(add_help_option=False)
+@click.option('--debug', is_flag=True, help="Enable debug mode for more verbose output")
+@click.option('--log-file',
+              type=OptionalType(click.Path(path_type=Path)),
+              default=None,
+              help="Path to log file for output")
+def main(debug: bool=False, log_file: Path|None=None):
     """Main entry point for the hython MCP server."""
+    config_logging(DEBUG if debug else INFO, log_file)
     # Run the FastMCP server
     mcp.run()
 
