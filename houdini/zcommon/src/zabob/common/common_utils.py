@@ -5,9 +5,12 @@ Common Utilities.
 from collections import defaultdict
 from collections.abc import Callable, Generator, Iterable, MutableMapping
 from functools import wraps
+from logging import Logger
+import logging
 import os
 from contextlib import contextmanager, suppress
 from enum import Enum, StrEnum
+from pathlib import Path
 import sys
 from typing import IO, Hashable, Literal, ParamSpec, TypeAlias, TypeVar, TypeVarTuple, Any
 import atexit
@@ -47,6 +50,7 @@ class Level(StrEnum):
     SILENT = "SILENT"
 
     level: 'Level'
+    logger: Logger|None
 
     @property
     def enabled(self) -> bool:
@@ -69,10 +73,25 @@ class Level(StrEnum):
         if self.enabled:
             # Only print the message if the current logging level is
             # at least as verbose as the message level.
-            print(message)
+            if self.logger is None:
+                print(message)
+            else:
+                # If a logger is set, use it to log the message.
+                match self:
+                    case Level.DEBUG:
+                        self.logger.debug(message)
+                    case Level.VERBOSE:
+                        self.logger.info(message)
+                    case Level.INFO:
+                        self.logger.info(message)
+                    case Level.QUIET:
+                        self.logger.warning(message)
+                    case Level.SILENT:
+                        self.logger.error(message)
 
 
 Level.level = Level.INFO
+Level.logger = None
 
 LEVELS: tuple[Level, ...] = tuple(Level.__members__.values())
 '''
@@ -85,6 +104,50 @@ INFO: Literal[Level.INFO] = Level.INFO
 QUIET: Literal[Level.QUIET] = Level.QUIET
 SILENT: Literal[Level.SILENT] = Level.SILENT
 
+
+def config_logging(level: Level|str|None=None,
+                     log_file: Path|None=None,
+                     ) -> None:
+    """
+    Configure the logging level and logger.
+
+    Args:
+        level (Level|str|None): The logging level to set. If `None`, the current level is used.
+        logger (Logger|None): The logger to use. If `None`, the default logger is used.
+    """
+    if isinstance(level, str):
+        level = Level(level)
+    if level is None:
+        level = Level.level
+    Level.level = level
+    if level in (Level.DEBUG, Level.VERBOSE):
+        print(f"Setting output level to {level.value}")
+    if log_file:
+        print (f"Logging to file: {log_file}")
+        log_file.resolve().parent.mkdir(parents=True, exist_ok=True)
+        match level:
+            case Level.DEBUG:
+                log_level = logging.DEBUG
+            case Level.VERBOSE:
+                log_level = logging.INFO
+            case Level.INFO:
+                log_level = logging.INFO
+            case Level.QUIET:
+                log_level = logging.WARNING
+            case Level.SILENT:
+                log_level = logging.ERROR
+
+        # If a log file is specified, configure the logger to write to it.
+        logging.basicConfig(
+            handlers=[
+                logging.FileHandler(log_file, mode='a', encoding='utf-8')
+                ],
+            force=True,
+            level=level.value,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        Level.logger = logging.getLogger()
 
 @contextmanager
 def environment(*remove, **update):
