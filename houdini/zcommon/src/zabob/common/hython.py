@@ -202,7 +202,7 @@ def hython(script_path: Path, arguments: Sequence[str],
         sys.exit(1)
     hython_path = houdini.hython
     try:
-        run(hython_path, '--version')
+        run(hython_path, '--version', stdout=DEVNULL, stderr=DEVNULL)
     except FileNotFoundError:
         print("Hython is not installed. Please install it first.")
         sys.exit(1)
