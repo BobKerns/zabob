@@ -172,7 +172,7 @@ async def list_nodes(parent_path: str = "/") -> dict[str, Any]:
         }
 
 @mcp.tool("create_node")
-async def create_node(parent_path: str, node_type: str, name: str = "", **kwargs) -> dict[str, Any]:
+async def create_node(parent_path: str, node_type: str, name: str, params: dict, /) -> dict[str, Any]:
     """
     Create a new node in the scene.
 
@@ -196,7 +196,7 @@ async def create_node(parent_path: str, node_type: str, name: str = "", **kwargs
         new_node = parent.createNode(node_type, name)
 
         # Set any provided parameters
-        for parm_name, value in kwargs.items():
+        for parm_name, value in params.items():
             parm = new_node.parm(parm_name)
             if parm:
                 parm.set(value)
