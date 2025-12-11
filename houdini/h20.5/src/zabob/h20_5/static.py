@@ -11,7 +11,7 @@ import click
 import hou
 
 from zabob.common import (
-    ZABOB_OUT_DIR, analysis_db, analysis_db_writer, do_all, get_stored_modules,
+    ZABOB_OUT_DIR, OptionalType, analysis_db, analysis_db_writer, do_all, get_stored_modules,
 )
 from zabob.common.analyze_node_types import do_analysis
 
@@ -46,13 +46,16 @@ IGNORE_MODULES: Mapping[str, str] = MappingProxyType({
 
 default_db = ZABOB_OUT_DIR / hou.applicationVersionString() / 'houdini_static_data.db'
 @click.command()
-@click.argument('db', type=click.Path(exists=False, dir_okay=False, path_type=Path), default=default_db)
-def load_data(db: Path=default_db):
+@click.argument('db', type=OptionalType(click.Path(exists=False, dir_okay=False, path_type=Path)), default=default_db)
+def load_data(db: Path|None):
     """
     Main function to save Houdini static data to a database.
     Args:
         db (Path): The path to the SQLite database file.
     """
+    if db == Path():
+        db = default_db
+    db = db or default_db
     db.parent.mkdir(parents=True, exist_ok=True)
     with analysis_db(db_path=db,
                      write=True,
@@ -67,7 +70,6 @@ def load_data(db: Path=default_db):
                                                 ignore=IGNORE_MODULES))),
                    label="Analyze Houdini 20.5 static data",)
     print(f"Static data saved to {db}")
-
 
 
 if __name__ == "__main__":

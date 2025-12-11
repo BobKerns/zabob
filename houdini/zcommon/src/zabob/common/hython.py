@@ -14,6 +14,7 @@ Hython invoker
 import os
 from pathlib import Path
 from collections.abc import Sequence
+from subprocess import DEVNULL
 import sys
 from typing import Literal, overload
 
@@ -70,6 +71,21 @@ def run_houdini_script(*args: Path|str,
                       capture_output: Literal[True],
                       env_vars: dict[str, str]|None = None,
                       **kwargs) -> str: ...
+@overload
+def run_houdini_script(*args: Path|str,
+                      module: str|None,
+                      version: Version|None=None,
+                      capture_output: Literal[True],
+                      env_vars: dict[str, str]|None = None,
+                      **kwargs) -> str: ...
+@overload
+def run_houdini_script(script_path: Path|str|None,
+                       *args: Path|str,
+                      module: str|None,
+                      version: Version|None=None,
+                      capture_output: Literal[False],
+                      env_vars: dict[str, str]|None = None,
+                      **kwargs) -> CompletedProcess: ...
 def run_houdini_script(script_path: Path|str|None=None,
                       *args: Path|str,
                       module: str|None = None,
@@ -101,7 +117,7 @@ def run_houdini_script(script_path: Path|str|None=None,
         case _, None:
             script = (script_path, )
         case _, _:
-            script = ('-m', module, '--', script_path)
+            script = ('-m', module, script_path)
 
     match capture_output, exec:
         case True, True:
@@ -111,11 +127,21 @@ def run_houdini_script(script_path: Path|str|None=None,
     houdini = get_houdini(version)
 
     # Build paths for the environment
-    major_minor = f"{houdini.houdini_version.major}_{houdini.houdini_version.minor}"
+    major_minor = f"{houdini.houdini_version.major}.{houdini.houdini_version.minor}"
     paths = [ZABOB_ZCOMMON_DIR / "src", ZABOB_ROOT / "zabob-modules" / "src"]
     version_path = ZABOB_HOUDINI_DIR / f"h{major_minor}" / "src"
     if version_path.exists():
         paths.append(version_path)
+
+    # Add hython world virtual environment site-packages for FastMCP access
+    # Both h20.5 and zcommon venvs contain packages needed for the hython MCP server
+    h20_5_venv_site_packages = ZABOB_HOUDINI_DIR / f"h{major_minor}" / ".venv" / "lib" / "python3.11" / "site-packages"
+    if h20_5_venv_site_packages.exists():
+        paths.append(h20_5_venv_site_packages)
+
+    zcommon_venv_site_packages = ZABOB_ZCOMMON_DIR / ".venv" / "lib" / "python3.11" / "site-packages"
+    if zcommon_venv_site_packages.exists():
+        paths.append(zcommon_venv_site_packages)
 
     # Setup bytecode cache directory
     pycache_dir = ZABOB_PYCACHE_DIR / f"houdini_{houdini.houdini_version}"
@@ -125,28 +151,30 @@ def run_houdini_script(script_path: Path|str|None=None,
     with environment(PYTHONPATH=os.pathsep.join(str(p) for p in paths),
                     PYTHONPYCACHEPREFIX=str(pycache_dir),
                     **(env_vars or {})):
-        if exec:
-            return exec_cmd(houdini.hython, *script, *args,
-                            **kwargs)
-        if capture_output:
-            return capture(houdini.hython, *script, *args,
+        try:
+            if exec:
+                return exec_cmd(houdini.hython, *script, *args,
+                                **kwargs)
+            if capture_output:
+                return capture(houdini.hython, *script, *args,
+                               **kwargs)
+            else:
+                return run(houdini.hython, *script, *args,
                            **kwargs)
-        else:
-            return run(houdini.hython, *script, *args,
-                       **kwargs)
+        except RuntimeError as ex:
+            print(ex, file=sys.stderr)
+            sys.exit(1)
 
-@ click.command(
+# We disable --help here so that invoked commands can handle it.
+# But if no arguments are given, it will show the help message.
+@click.command(
     name='hython',
     help='Run hython with the given arguments.',
+    add_help_option=False,
+    no_args_is_help=True,
     context_settings=dict(
         ignore_unknown_options=True,
     )
-)
-@click.argument(
-    'script_path',
-    required=False,
-    default=None,
-    type=OptionalType(click.Path(exists=True, dir_okay=False, path_type=Path))
 )
 @click.argument(
     'arguments',
@@ -154,7 +182,7 @@ def run_houdini_script(script_path: Path|str|None=None,
     type=str,
 )
 @click.option(
-    '--version',
+    '--houdini-version',
     type=OptionalType(SemVerParamType(min_parts=2)),
     default=None,
     help='Houdini version to use (e.g., "20.5" or "20.5.584"). If not specified, the latest version will be used.'
@@ -164,8 +192,8 @@ def run_houdini_script(script_path: Path|str|None=None,
     type=OptionalType(str),
     default=None,
 )
-def hython(script_path: Path, arguments: Sequence[str],
-           version: Version|None=None,
+def hython(arguments: Sequence[str],
+           houdini_version: Version|None=None,
            module: str|None = None) -> None:
     """
     Run hython with the given arguments.
@@ -180,22 +208,32 @@ def hython(script_path: Path, arguments: Sequence[str],
     import sys
 
     # Check if hython is installed
-    houdini = get_houdini(version)
+    houdini = get_houdini(houdini_version)
     if houdini is None:
         print("Houdini is not installed or not found.")
         sys.exit(1)
     hython_path = houdini.hython
     try:
-        run(hython_path, '--version')
+        run(hython_path, '--version', stdout=DEVNULL, stderr=DEVNULL)
     except FileNotFoundError:
         print("Hython is not installed. Please install it first.")
         sys.exit(1)
+
+    script_path: Path|None = None
+    if not module and len(arguments) > 0:
+        # If no module is specified, treat the first argument as the script path
+        script_path = Path(arguments[0])
+        arguments = arguments[1:]
+        if not script_path.exists():
+            print(f"Script path '{script_path}' does not exist.")
+            sys.exit(1)
 
     run_houdini_script(
         script_path,
         *arguments,
         module=module,
-        version=version,
+        version=houdini_version,
+        capture_output=False,
     )
 
 if __name__ == '__main__':
