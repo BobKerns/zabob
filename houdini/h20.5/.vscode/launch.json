@@ -9,7 +9,7 @@
             "console": "integratedTerminal",
             "python": "/Applications/Houdini/Houdini20.5.584/Frameworks/Houdini.framework/Resources/bin/hython",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:h20.5}/src${pathSeparator}${env:PYTHONPATH}"
+                "PYTHONPATH": "${workspaceFolder:h20.5}/src:${workspaceFolder:zcommon}/src:${env:PYTHONPATH}"
             },
             "args": ["${command:pickArgs}"],
         },
@@ -20,9 +20,20 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:h20.5}/src${pathSeparator}${env:PYTHONPATH}"
+                "PYTHONPATH": "${workspaceFolder:h20.5}/src${pathSeparator}${workspaceFolder:zcommon}/src${pathSeparator}${env:PYTHONPATH}"
             },
             "args": ["${command:pickArgs}"],
+        },
+        {
+            "name": "Hython MCP(h20-5)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder:h20.5}/src${pathSeparator}${workspaceFolder:zcommon}/src${pathSeparator}${env:PYTHONPATH}"
+            },
+            "args": ["-m", "zabob.common.hython", "${command:pickArgs}"],
         }
     ]
 }

@@ -121,11 +121,10 @@ class HoudiniDatabase:
         cursor = conn.cursor()
 
         # Look for functions with return types containing 'Node' or specific node types
-        # Handle both old JSON format ("function") and new plain format (function)
         query = """
         SELECT name, parent_name, parent_type, datatype, docstring
         FROM houdini_module_data
-        WHERE (type = 'function' OR type = '"function"')
+        WHERE type = 'FUNCTION'
         AND (datatype LIKE '%Node%'
              OR datatype LIKE '%hou.Node%'
              OR datatype LIKE '%GeometryNode%'
@@ -138,9 +137,14 @@ class HoudiniDatabase:
         results = []
 
         for row in cursor.fetchall():
+            # Handle module aliasing: if parent_name starts with '_', also expose without underscore
+            display_module = row['parent_name']
+            if display_module.startswith('_') and len(display_module) > 1:
+                display_module = display_module[1:]
+
             func_info = FunctionInfo(
                 name=row['name'],
-                module=row['parent_name'],
+                module=display_module,
                 parent_name=row['parent_name'],
                 parent_type=row['parent_type'],
                 datatype=row['datatype'],
@@ -157,11 +161,10 @@ class HoudiniDatabase:
         cursor = conn.cursor()
 
         # Search in function names and docstrings
-        # Handle both old JSON format ("function") and new plain format (function)
         query = """
         SELECT name, parent_name, parent_type, datatype, docstring
         FROM houdini_module_data
-        WHERE (type = 'function' OR type = '"function"')
+        WHERE type = 'FUNCTION'
         AND (name LIKE ? OR docstring LIKE ?)
         ORDER BY
             CASE WHEN name LIKE ? THEN 1 ELSE 2 END,
@@ -176,9 +179,15 @@ class HoudiniDatabase:
         results = []
 
         for row in cursor.fetchall():
+            # Handle module aliasing: if parent_name starts with '_', also expose without underscore
+            display_module = row['parent_name']
+            if display_module.startswith('_') and len(display_module) > 1:
+                # For _hou -> hou, _something -> something
+                display_module = display_module[1:]
+
             func_info = FunctionInfo(
                 name=row['name'],
-                module=row['parent_name'],
+                module=display_module,
                 parent_name=row['parent_name'],
                 parent_type=row['parent_type'],
                 datatype=row['datatype'],
@@ -194,11 +203,10 @@ class HoudiniDatabase:
         cursor = conn.cursor()
 
         # Look for functions with 'primitive', 'prim', 'geometry' in name or docstring
-        # Handle both old JSON format ("function") and new plain format (function)
         query = """
         SELECT name, parent_name, parent_type, datatype, docstring
         FROM houdini_module_data
-        WHERE (type = 'function' OR type = '"function"')
+        WHERE type = 'FUNCTION'
         AND (name LIKE '%primitive%'
              OR name LIKE '%prim%'
              OR name LIKE '%geometry%'
@@ -221,9 +229,56 @@ class HoudiniDatabase:
         results = []
 
         for row in cursor.fetchall():
+            # Handle module aliasing: if parent_name starts with '_', also expose without underscore
+            display_module = row['parent_name']
+            if display_module.startswith('_') and len(display_module) > 1:
+                display_module = display_module[1:]
+
             func_info = FunctionInfo(
                 name=row['name'],
-                module=row['parent_name'],
+                module=display_module,
+                parent_name=row['parent_name'],
+                parent_type=row['parent_type'],
+                datatype=row['datatype'],
+                docstring=row['docstring']
+            )
+            results.append(func_info)
+
+        return results
+
+    def search_functions_by_module(self, module_name: str, limit: int = 100) -> List[FunctionInfo]:
+        """Search for functions by module name, handling module aliasing."""
+        conn = self.connect()
+        cursor = conn.cursor()
+
+        # Search both the module name and its underscore variant
+        # e.g., search for both 'hou' and '_hou'
+        search_modules = [module_name]
+        if not module_name.startswith('_'):
+            search_modules.append(f'_{module_name}')
+
+        placeholders = ','.join(['?'] * len(search_modules))
+        query = f"""
+        SELECT name, parent_name, parent_type, datatype, docstring
+        FROM houdini_module_data
+        WHERE type = 'FUNCTION'
+        AND parent_name IN ({placeholders})
+        ORDER BY name
+        LIMIT ?
+        """
+
+        cursor.execute(query, search_modules + [limit])
+        results = []
+
+        for row in cursor.fetchall():
+            # Handle module aliasing: if parent_name starts with '_', also expose without underscore
+            display_module = row['parent_name']
+            if display_module.startswith('_') and len(display_module) > 1:
+                display_module = display_module[1:]
+
+            func_info = FunctionInfo(
+                name=row['name'],
+                module=display_module,
                 parent_name=row['parent_name'],
                 parent_type=row['parent_type'],
                 datatype=row['datatype'],
@@ -248,7 +303,7 @@ class HoudiniDatabase:
             COUNT(md.name) as function_count
         FROM houdini_modules m
         LEFT JOIN houdini_module_data md ON m.name = md.parent_name
-            AND (md.type = 'function' OR md.type = '"function"')
+            AND md.type = 'FUNCTION'
         GROUP BY m.name, m.directory, m.file, m.status
         ORDER BY m.name
         """
@@ -370,11 +425,11 @@ class HoudiniDatabase:
         stats['modules'] = cursor.fetchone()[0]
 
         # Count functions
-        cursor.execute("SELECT COUNT(*) FROM houdini_module_data WHERE type = 'function'")
+        cursor.execute("SELECT COUNT(*) FROM houdini_module_data WHERE type = 'FUNCTION'")
         stats['functions'] = cursor.fetchone()[0]
 
         # Count classes
-        cursor.execute("SELECT COUNT(*) FROM houdini_module_data WHERE type = 'class'")
+        cursor.execute("SELECT COUNT(*) FROM houdini_module_data WHERE type = 'CLASS'")
         stats['classes'] = cursor.fetchone()[0]
 
         # Count node types
