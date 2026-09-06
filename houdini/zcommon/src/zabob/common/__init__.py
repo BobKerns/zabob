@@ -36,7 +36,7 @@ from zabob.common.click_types import (
     OptionalType, SemVerParamType, OrType, NoneType,
 )
 from zabob.common.common_utils import (
-    _version, Level, LEVELS,
+    _version, Level, config_logging, LEVELS,
     DEBUG, INFO, QUIET, SILENT, VERBOSE,
     environment, prevent_atexit, prevent_exit,
     none_or, not_none, not_none1, not_none2,
@@ -101,6 +101,7 @@ __all__ = (
     "NoneType",
     "_version",
     "Level",
+    "config_logging",
     "LEVELS",
     "DEBUG",
     "INFO",

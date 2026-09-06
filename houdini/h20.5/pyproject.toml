@@ -12,6 +12,7 @@ dependencies = [
     "hou>=0.1.0",
     "semver>=3.0.4",
     "zabob-common",
+    "fastmcp>=2.4.0",
 ]
 
 [tool.zabob]
@@ -19,6 +20,7 @@ use-hython = true
 
 [project.scripts]
 h20-5 = "zabob.h20_5:main"
+houdini-mcp-server = "zabob.h20_5.houdini_mcp_server:main"
 
 # [build-system]
 # requires = ["hatchling"]
